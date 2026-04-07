@@ -1,0 +1,263 @@
+// Aydin Creative Studio - Database schema
+// Single-tenant: solo team Aydin, ma con workspace separati per cliente.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =====================================================================
+// CLIENT WORKSPACE
+// =====================================================================
+
+model Client {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  logoUrl     String?
+  brandColors Json?
+  brandFonts  Json?
+
+  // Preferenze video di default per questo cliente
+  defaultAvatarId        String?
+  defaultVoiceProvider   String? // "heygen" | "elevenlabs"
+  defaultVoiceId         String?
+  defaultCaptionPresetId String?
+  defaultMotionPresetId  String?
+
+  // Sottoinsieme di avatar/voci preferiti per questo cliente
+  preferredAvatarIds String[] @default([])
+  preferredVoiceIds  String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projects     Project[]
+  avatarUsages AvatarUsage[]
+
+  @@index([slug])
+}
+
+// =====================================================================
+// PROJECT (un singolo video da generare)
+// =====================================================================
+
+model Project {
+  id       String @id @default(cuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  title  String
+  script String  @db.Text
+  notes  String?
+
+  // Configurazione di generazione (snapshot al momento del create)
+  avatarId      String // HeyGen avatar look id
+  voiceProvider String // "heygen" | "elevenlabs"
+  voiceId       String // voice id del provider scelto
+
+  // Se voiceProvider == "elevenlabs", possiamo override le settings di voice
+  elevenlabsSettings Json? // { stability, similarity_boost, style, use_speaker_boost }
+
+  captionPresetId String?
+  motionPresetId  String?
+  musicMood       String?
+
+  resolution  String @default("720p")
+  aspectRatio String @default("9:16")
+
+  // Stato + asset
+  status        ProjectStatus @default(DRAFT)
+  finalVideoUrl String?
+  thumbnailUrl  String?
+
+  // Costi
+  costEstimate Float?
+  costActual   Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  renderJobs RenderJob[]
+
+  @@index([clientId, createdAt])
+  @@index([status])
+}
+
+enum ProjectStatus {
+  DRAFT
+  QUEUED
+  GENERATING_AUDIO
+  GENERATING_AVATAR
+  TRANSCRIBING
+  GENERATING_MOTION_GRAPHICS
+  GENERATING_BROLL
+  GENERATING_MUSIC
+  RENDERING
+  COMPLETED
+  FAILED
+}
+
+// =====================================================================
+// RENDER JOB (tracking BullMQ + step-by-step)
+// =====================================================================
+
+model RenderJob {
+  id        String @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  bullJobId String?
+  step      String
+  attempt   Int @default(1)
+
+  // External references
+  heygenAudioAssetId     String?
+  heygenVideoId          String?
+  heygenAvatarUrl        String?
+  elevenlabsAudioPath    String?
+  assemblyaiTranscriptId String?
+  motionGraphicsClipUrls String[] @default([])
+  brollUrls              String[] @default([])
+  musicUrl               String?
+
+  // Output finale
+  finalRenderPath String?
+
+  status       JobStatus @default(PENDING)
+  errorMessage String?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([status])
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// =====================================================================
+// AVATAR LIBRARY (snapshot della libreria HeyGen curata)
+// =====================================================================
+
+model Avatar {
+  id               String   @id // = HeyGen avatar look id
+  name             String
+  firstName        String
+  gender           String // "male" | "female"
+  aspect           String // "9:16" | "16:9" | "1:1"
+  width            Int
+  height           Int
+  avatarType       String // "photo_avatar" | "video_avatar" | "studio_avatar"
+  supportedEngines String[] @default([])
+  defaultVoiceId   String?
+  previewImageUrl  String?
+  previewVideoUrl  String?
+  groupId          String?
+
+  // Tagging custom per filtri UI
+  tags String[] @default([])
+
+  enabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  usages AvatarUsage[]
+
+  @@index([gender, aspect])
+}
+
+// Tracciamento usi per rotazione (mai stesso avatar 2 volte di fila per cliente)
+model AvatarUsage {
+  id       String @id @default(cuid())
+  avatarId String
+  avatar   Avatar @relation(fields: [avatarId], references: [id])
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+  usedAt   DateTime @default(now())
+
+  @@index([clientId, usedAt])
+  @@index([avatarId])
+}
+
+// =====================================================================
+// VOICE LIBRARY (voci ElevenLabs + HeyGen italiane)
+// L'utente puo scegliere tra le due provider nella UI del nuovo video
+// =====================================================================
+
+model Voice {
+  id         String  @id // voice id provider
+  provider   String // "elevenlabs" | "heygen"
+  name       String
+  language   String  @default("it")
+  gender     String? // "male" | "female"
+  category   String? // "premade" | "professional" | "cloned"
+  useCase    String? // "advertisement" | "narrative_story" | "informative_educational"
+  ageRange   String? // "young" | "middle_aged" | "old"
+  previewUrl String?
+
+  // Per ElevenLabs: settings consigliate per questa voce
+  recommendedSettings Json? // { stability, similarity_boost, style, use_speaker_boost }
+
+  enabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, id])
+  @@index([provider, language])
+}
+
+// =====================================================================
+// PRESETS: CAPTIONS + MOTION GRAPHICS
+// =====================================================================
+
+model CaptionsPreset {
+  id           String  @id @default(cuid())
+  name         String  @unique
+  description  String?
+  thumbnailUrl String?
+
+  remotionComponent String
+  defaultProps      Json
+
+  enabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MotionGraphicsPreset {
+  id               String  @id @default(cuid())
+  name             String  @unique
+  description      String?
+  thumbnailUrl     String?
+  creatorAvatarUrl String?
+
+  prompt            String   @db.Text
+  styleReferenceUrl String?
+  cachedFrameUrls   String[] @default([])
+  model             String   @default("veo-3.1-fast")
+  provider          String   @default("fal.ai")
+  defaultDuration   Int      @default(5)
+  qualityTier       String   @default("fast")
+
+  enabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
