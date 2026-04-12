@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 
-// @ts-expect-error - pdf-parse non ha i tipi
-import pdfParse from "pdf-parse";
+// pdf-parse v2 non ha un default export ESM — usiamo import dinamico
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let pdfParse: (buf: Buffer) => Promise<{ text: string }>;
+const _loadPdfParse = import("pdf-parse").then((m: any) => {
+  pdfParse = (m.default ?? m) as typeof pdfParse;
+});
 import mammoth from "mammoth";
 
 /**
@@ -35,6 +39,7 @@ export async function POST(req: Request) {
     let text = "";
 
     if (name.endsWith(".pdf")) {
+      await _loadPdfParse;
       const result = await pdfParse(buf);
       text = result.text ?? "";
     } else if (name.endsWith(".docx")) {
