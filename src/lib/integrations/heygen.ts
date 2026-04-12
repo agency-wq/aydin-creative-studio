@@ -106,18 +106,24 @@ export async function uploadAudioAsset(
   return json.data;
 }
 
-// =============== Video generation (v3) ===============
+// =============== Video generation (v2 — più stabile, esplicita Avatar III/IV) ===============
+// Usiamo POST /v2/video/generate perché:
+//  1. Ha il parametro esplicito use_avatar_iv_model (true=IV, false=III)
+//  2. /v3/videos forza Avatar IV per default e fallisce con avatar legacy
+//  3. Supporta tutti i tipi: text, audio (asset_id o url)
 
 export type CreateVideoOptions = {
   avatarId: string;
-  resolution?: "720p" | "1080p";
-  aspectRatio?: "9:16" | "16:9";
+  resolution?: "720p" | "1080p"; // mappato a dimension
+  aspectRatio?: "9:16" | "16:9"; // mappato a dimension
   title?: string;
-  // Voice source: usa UNO solo dei seguenti gruppi
+  // Voice source: UNO solo dei seguenti
   script?: string;
   voiceId?: string; // richiesto con script
-  audioAssetId?: string; // alternativa: audio uploaded (e.g. ElevenLabs)
+  audioAssetId?: string; // alternativa: audio uploaded (es. ElevenLabs)
   audioUrl?: string; // alternativa: public URL
+  // Engine: per default usiamo Avatar III (massima compatibilità)
+  useAvatarIV?: boolean;
   voiceSettings?: {
     speed?: number;
     pitch?: number;
@@ -125,42 +131,62 @@ export type CreateVideoOptions = {
   };
 };
 
+function dimensionFor(resolution: "720p" | "1080p", aspectRatio: "9:16" | "16:9") {
+  if (aspectRatio === "9:16") {
+    return resolution === "1080p" ? { width: 1080, height: 1920 } : { width: 720, height: 1280 };
+  }
+  return resolution === "1080p" ? { width: 1920, height: 1080 } : { width: 1280, height: 720 };
+}
+
 export async function createAvatarVideo(opts: CreateVideoOptions): Promise<{
   video_id: string;
-  status: string;
+  status?: string;
 }> {
-  const body: Record<string, unknown> = {
+  const character: Record<string, unknown> = {
     type: "avatar",
     avatar_id: opts.avatarId,
-    resolution: opts.resolution ?? "720p",
-    aspect_ratio: opts.aspectRatio ?? "9:16",
+    avatar_style: "normal",
+    use_avatar_iv_model: opts.useAvatarIV ?? false,
   };
-  if (opts.title) body.title = opts.title;
 
-  if (opts.script && opts.voiceId) {
-    body.script = opts.script;
-    body.voice_id = opts.voiceId;
-  } else if (opts.audioAssetId) {
-    body.audio_asset_id = opts.audioAssetId;
+  let voice: Record<string, unknown>;
+  if (opts.audioAssetId) {
+    voice = { type: "audio", audio_asset_id: opts.audioAssetId };
   } else if (opts.audioUrl) {
-    body.audio_url = opts.audioUrl;
+    voice = { type: "audio", audio_url: opts.audioUrl };
+  } else if (opts.script && opts.voiceId) {
+    voice = {
+      type: "text",
+      input_text: opts.script,
+      voice_id: opts.voiceId,
+      ...(opts.voiceSettings?.speed !== undefined ? { speed: opts.voiceSettings.speed } : {}),
+      ...(opts.voiceSettings?.pitch !== undefined ? { pitch: opts.voiceSettings.pitch } : {}),
+    };
   } else {
     throw new Error("createAvatarVideo: serve script+voiceId, audioAssetId o audioUrl");
   }
 
-  if (opts.voiceSettings) body.voice_settings = opts.voiceSettings;
+  const body: Record<string, unknown> = {
+    video_inputs: [
+      {
+        character,
+        voice,
+        background: { type: "color", value: "#000000" },
+      },
+    ],
+    dimension: dimensionFor(opts.resolution ?? "720p", opts.aspectRatio ?? "9:16"),
+  };
+  if (opts.title) body.title = opts.title;
 
-  const r = await heygenFetch<{ data: { video_id: string; status: string } }>(
-    "/v3/videos",
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    }
-  );
+  const r = await heygenFetch<{ data: { video_id: string } }>("/v2/video/generate", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
   return r.data;
 }
 
-// =============== Video status (v3) ===============
+// =============== Video status (v1) ===============
+// /v2/video/generate restituisce solo video_id; lo stato si polla su /v1/video_status.get
 
 export type VideoStatus = {
   video_id: string;
@@ -172,7 +198,9 @@ export type VideoStatus = {
 };
 
 export async function getVideoStatus(videoId: string): Promise<VideoStatus> {
-  const r = await heygenFetch<{ data: VideoStatus }>(`/v3/videos/${videoId}`);
+  const r = await heygenFetch<{ data: VideoStatus }>(
+    `/v1/video_status.get?video_id=${encodeURIComponent(videoId)}`
+  );
   return r.data;
 }
 
@@ -184,9 +212,31 @@ export async function pollVideoUntilDone(
 ): Promise<VideoStatus> {
   const intervalMs = opts.intervalMs ?? 10000;
   const maxAttempts = opts.maxAttempts ?? 60;
+  const maxNetworkRetries = 5; // errori di rete consecutivi tollerati
+
+  let networkFailures = 0;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const status = await getVideoStatus(videoId);
+    let status: VideoStatus;
+    try {
+      status = await getVideoStatus(videoId);
+      networkFailures = 0; // reset al primo successo
+    } catch (err) {
+      networkFailures++;
+      const msg = (err as Error).message ?? String(err);
+      if (networkFailures >= maxNetworkRetries) {
+        throw new Error(
+          `HeyGen polling ${videoId}: ${maxNetworkRetries} errori di rete consecutivi, ultimo: ${msg}`
+        );
+      }
+      // Errore di rete temporaneo — aspetta e riprova
+      console.warn(
+        `[heygen] polling ${videoId} errore rete (${networkFailures}/${maxNetworkRetries}): ${msg} — riprovo...`
+      );
+      await new Promise((r) => setTimeout(r, intervalMs * 2));
+      continue;
+    }
+
     opts.onTick?.(status, attempt);
 
     if (status.status === "completed") return status;

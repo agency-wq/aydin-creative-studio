@@ -20,8 +20,14 @@ model Client {
   name        String   @unique
   slug        String   @unique
   logoUrl     String?
-  brandColors Json?
-  brandFonts  Json?
+  brandColors Json?    // BrandKit estratto da Claude Vision dal mockup
+  brandFonts  Json?    // Font style info estratta dal mockup
+
+  // Mockup prodotto (copertine guide, lead magnet, ecc.)
+  // Path relativi a public/ (usabili con staticFile() in Remotion)
+  mockupUrls  String[] @default([])
+  // Nome del prodotto estratto dal mockup (es. "Guida alla Libertà Finanziaria")
+  productName String?
 
   // Preferenze video di default per questo cliente
   defaultAvatarId        String?
@@ -75,6 +81,16 @@ model Project {
   status        ProjectStatus @default(DRAFT)
   finalVideoUrl String?
   thumbnailUrl  String?
+
+  // Trascrizione AssemblyAI con word-level timestamps
+  // { text, words: [{ word, start, end, confidence }], language }
+  transcript Json?
+
+  // Clip motion graphics generate via fal.ai (URL temporanei firmati)
+  motionGraphicsClips MotionGraphicsClip[]
+
+  // Clip b-roll salvate (Pexels stock o fal.ai generate)
+  brollClips BrollClip[]
 
   // Costi
   costEstimate Float?
@@ -168,8 +184,32 @@ model Avatar {
   previewVideoUrl  String?
   groupId          String?
 
-  // Tagging custom per filtri UI
+  // Filtri smart per UI
+  // hasLatinName: il nome inizia con un carattere latino (esclude russo/cinese/arabo)
+  hasLatinName Boolean @default(false)
+  // hasPreview: c'e un thumbnail effettivamente visibile
+  hasPreview Boolean @default(false)
+
+  // Tagging custom per filtri UI. Popolato dal backfill con i tags
+  // ritornati da GET /v2/avatar/{id}/details (es. ["AVATAR_IV"], ["AVATAR_III"]).
   tags String[] @default([])
+
+  // Quality tier derivato dai tags:
+  //   "premium"  = AVATAR_IV (lip sync perfetto, fotorealismo top, ~6x costo)
+  //   "standard" = AVATAR_III (lip sync molto buono, fotorealismo buono)
+  //   "legacy"   = AVATAR_II o no-tag o talking_photo (lip sync pupazzoso)
+  quality String @default("standard")
+
+  // Rating manuale dall'utente dopo aver testato l'avatar in un render reale.
+  // 0 = mai testato, 1-5 = valutazione (5 = perfetto per italiano + ElevenLabs)
+  rating Int @default(0)
+
+  // Timestamp dell'ultimo test effettuato su questo avatar (per capire se
+  // la review e' ancora valida dopo un nuovo training/upgrade HeyGen).
+  lastTestedAt DateTime?
+
+  // Marcato come preferito dall'utente (appare in cima alla griglia)
+  favorite Boolean @default(false)
 
   enabled Boolean @default(true)
 
@@ -179,6 +219,8 @@ model Avatar {
   usages AvatarUsage[]
 
   @@index([gender, aspect])
+  @@index([hasLatinName, hasPreview, enabled])
+  @@index([quality, rating])
 }
 
 // Tracciamento usi per rotazione (mai stesso avatar 2 volte di fila per cliente)
@@ -213,6 +255,9 @@ model Voice {
   // Per ElevenLabs: settings consigliate per questa voce
   recommendedSettings Json? // { stability, similarity_boost, style, use_speaker_boost }
 
+  // Marcato come preferito dall'utente
+  favorite Boolean @default(false)
+
   enabled Boolean @default(true)
 
   createdAt DateTime @default(now())
@@ -220,6 +265,7 @@ model Voice {
 
   @@unique([provider, id])
   @@index([provider, language])
+  @@index([favorite])
 }
 
 // =====================================================================
@@ -239,6 +285,80 @@ model CaptionsPreset {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Clip generata da fal.ai (modello configurabile) per un singolo project.
+// Un Project puo averne piu di una (es. 4-6 cutaway che cambiano stile).
+model MotionGraphicsClip {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  presetId  String? // riferimento al preset usato (opzionale, soft-link)
+  presetName String?
+
+  prompt     String  @db.Text
+  videoUrl   String  @default("") // legacy, vuoto per i clip Remotion-based
+  thumbnailUrl String?
+  durationSec Int?
+  requestId  String? // fal.ai request_id (per debug / re-fetch, legacy)
+  seed       Int?
+
+  // Modello fal.ai usato + costo stimato (legacy)
+  model        String?
+  costUsd      Float?
+
+  // ===========================================================================
+  // Remotion motion graphics templates (NUOVO approccio post-fix)
+  // Le motion graphics ora sono renderizzate inline da Remotion (no fal.ai).
+  // - templateName: id del template registrato in src/remotion/motion-graphics/registry
+  // - templateProps: i props passati al template (es. { text, number, items, ... })
+  // - themeName: nome del theme (palette + font) per styling
+  // ===========================================================================
+  templateName  String?
+  templateProps Json?
+  themeName     String?
+
+  // Status: PENDING -> RUNNING -> COMPLETED | FAILED
+  status   String @default("PENDING")
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+}
+
+// B-roll clip salvata per un project. Source = "pexels" | "falai".
+model BrollClip {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  source     String // "pexels" | "falai"
+  externalId String? // pexels video id, fal request id, ecc.
+  query      String? // keyword di ricerca usata
+
+  videoUrl     String
+  thumbnailUrl String?
+  width        Int?
+  height       Int?
+  durationSec  Int?
+
+  // Attribuzione (Pexels richiede credit a creator)
+  authorName String?
+  authorUrl  String?
+  pageUrl    String?
+
+  // Posizionamento nel timeline finale (deciso in editor)
+  orderIndex Int     @default(0)
+  startMs    Int?
+  endMs      Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
 }
 
 model MotionGraphicsPreset {

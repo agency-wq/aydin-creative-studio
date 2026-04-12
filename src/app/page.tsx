@@ -1,65 +1,121 @@
-import Image from "next/image";
+import Link from "next/link";
+import { prisma } from "@/lib/db";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function DashboardPage() {
+  const [
+    clientCount,
+    projectCount,
+    avatarCount,
+    voiceCount,
+    motionPresetCount,
+    captionPresetCount,
+    recentProjects,
+  ] = await Promise.all([
+    prisma.client.count(),
+    prisma.project.count(),
+    prisma.avatar.count({ where: { enabled: true } }),
+    prisma.voice.count({ where: { enabled: true } }),
+    prisma.motionGraphicsPreset.count({ where: { enabled: true } }),
+    prisma.captionsPreset.count({ where: { enabled: true } }),
+    prisma.project.findMany({
+      take: 8,
+      orderBy: { createdAt: "desc" },
+      include: { client: true },
+    }),
+  ]);
+
+  const stats = [
+    { label: "Clienti", value: clientCount, href: "/clients" },
+    { label: "Video totali", value: projectCount, href: "/library" },
+    { label: "Avatar in libreria", value: avatarCount, href: "/avatars" },
+    { label: "Voci italiane", value: voiceCount, href: "/voices" },
+    { label: "Preset Motion Graphics", value: motionPresetCount, href: "/presets" },
+    { label: "Preset Captions", value: captionPresetCount, href: "/presets" },
+  ];
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div className="p-8 max-w-7xl mx-auto">
+      <header className="mb-8 flex items-end justify-between gap-6">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground mt-1">
+            Aydin Creative Studio — produzione video AI per i tuoi clienti
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <Link
+          href="/projects/new"
+          className="inline-flex h-9 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+        >
+          + Nuovo video
+        </Link>
+      </header>
+
+      <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-10">
+        {stats.map((s) => (
+          <Link key={s.label} href={s.href}>
+            <Card className="hover:border-primary/60 transition-colors">
+              <CardHeader className="pb-2">
+                <CardDescription className="text-xs uppercase tracking-wide">
+                  {s.label}
+                </CardDescription>
+                <CardTitle className="text-3xl tabular-nums">{s.value}</CardTitle>
+              </CardHeader>
+            </Card>
+          </Link>
+        ))}
+      </section>
+
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold">Video recenti</h2>
+          {recentProjects.length > 0 && (
+            <Link href="/library" className="text-sm text-muted-foreground hover:text-foreground">
+              Vedi tutti →
+            </Link>
+          )}
         </div>
-      </main>
+
+        {recentProjects.length === 0 ? (
+          <Card>
+            <CardContent className="py-16 text-center">
+              <p className="text-muted-foreground mb-6">
+                Nessun video ancora. Crea il primo per partire.
+              </p>
+              <Link
+                href="/projects/new"
+                className="inline-flex h-9 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                Crea il primo video
+              </Link>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {recentProjects.map((p) => (
+              <Card key={p.id}>
+                <CardHeader>
+                  <CardDescription>{p.client.name}</CardDescription>
+                  <CardTitle className="text-base line-clamp-2">{p.title}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between">
+                    <Badge variant={p.status === "COMPLETED" ? "default" : "secondary"}>
+                      {p.status.toLowerCase().replaceAll("_", " ")}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(p.createdAt).toLocaleDateString("it-IT")}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

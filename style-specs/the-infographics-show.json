@@ -1,0 +1,90 @@
+{
+  "presetName": "The Infographics Show",
+  "summary": "Bold flat vector illustrations con palette vivace, tipografia sans-serif pesante e animazioni snappy. Stile educativo-infotainment con personaggi cartoon stilizzati e grafiche geometriche pulite.",
+  "palette": {
+    "primaryBg": "#FFFFFF",
+    "secondaryBg": "#F5F5F5",
+    "text": "#2B2B2B",
+    "accent1": "#FF6B6B",
+    "accent2": "#4ECDC4",
+    "supportColors": [
+      "#FFE66D",
+      "#A8E6CF",
+      "#FF8B94",
+      "#C7CEEA",
+      "#FFA07A"
+    ]
+  },
+  "typography": {
+    "displayFontFamily": "Montserrat",
+    "displayFontWeight": 800,
+    "displayLetterSpacing": "-0.01em",
+    "displayCase": "normal",
+    "bodyFontFamily": "Montserrat",
+    "bodyFontWeight": 600,
+    "displayFeel": "geometric sans bold punchy"
+  },
+  "layoutPatterns": [
+    "lower-third bianco opaco con testo nero centrato, bordo sottile colorato superiore",
+    "titoli centrati full-screen con sottotitoli in peso minore staccati da 20px",
+    "stats box con numero gigante (120-180pt) e label piccola sotto, contenitore con bordo 4px colorato",
+    "split-screen verticale: illustrazione vettoriale a sinistra, bullet points a destra con icone circolari",
+    "banner orizzontale di categoria in alto con icona + testo maiuscolo"
+  ],
+  "iconography": {
+    "style": "flat vector 2D con outline spesso 3-4px, palette a colori piatti senza gradienti",
+    "characteristicElements": [
+      "personaggi cartoon stilizzati con teste sovradimensionate e corpi semplificati",
+      "icone circolari solide con pittogrammi bianchi centrati",
+      "mappe geografiche stilizzate con pin location colorati",
+      "frecce direzionali bold con punte triangolari",
+      "badge esagonali o rettangolari con bordi netti per callout"
+    ]
+  },
+  "animationStyle": {
+    "feel": "snappy",
+    "characteristicMoves": [
+      "pop-in con scale 0 -> 1.1 -> 1.0 in 0.4s con ease-out-back",
+      "slide-in laterale da sinistra/destra con translateX e opacity 0->1 in 0.3s",
+      "fade-up per testi: translateY(30px) opacity 0 -> translateY(0) opacity 1 in 0.5s",
+      "stagger sequenziale su liste con delay 0.08s tra elementi",
+      "pulse su numeri: scale 1 -> 1.05 -> 1 in loop 1.2s per enfasi"
+    ],
+    "transitionStyle": "cut secco senza transizioni o flash bianco rapido 2 frame"
+  },
+  "characteristicElements": [
+    "personaggi cartoon con outline nero spesso e palette a 3-4 colori piatti",
+    "numeri enormi (150-200pt) in bold con colori vivaci accent come rosso/teal",
+    "lower-third bianco semi-opaco con testo nero centrato e bordino colorato top",
+    "icone circolari monocromatiche con sfondo solido e pittogramma bianco",
+    "layout puliti con tanto spazio negativo bianco e blocchi colorati ben separati",
+    "palette primaria rosso-teal-giallo come accenti ricorrenti"
+  ],
+  "thingsToAvoid": [
+    "no font serif o script decorativi",
+    "no gradienti complessi o effetti glossy/3D realistici",
+    "no animazioni morbide ed elastiche troppo lente",
+    "no texture o pattern organici",
+    "no palette scure o moody, sempre luminoso e high-contrast",
+    "no illustrazioni dettagliate fotorealistiche"
+  ],
+  "exampleProps": {
+    "TitleCard": {
+      "eyebrow": "FAST FACTS",
+      "title": "The Science Behind It"
+    },
+    "BigNumber": {
+      "value": 47,
+      "label": "COUNTRIES AFFECTED",
+      "suffix": ""
+    },
+    "BulletList": {
+      "title": "Key Takeaways",
+      "items": [
+        "Vector illustrations keep it simple",
+        "Bold colors grab attention",
+        "Snappy animations maintain pace"
+      ]
+    }
+  }
+}
