@@ -49,7 +49,7 @@ export async function saveMotionGraphicsFromPlan(opts: {
   // Reset clip motion graphics precedenti per questo project (re-run pulito)
   await opts.prisma.motionGraphicsClip.deleteMany({ where: { projectId: opts.projectId } });
 
-  // Risolvi il preset (solo per soft-link / nome leggibile in DB)
+  // Risolvi il preset (solo per soft-link / nome leggibile in DB, opzionale)
   let presetName: string | null = null;
   let presetIdResolved: string | null = null;
   if (opts.presetId) {
@@ -72,9 +72,9 @@ export async function saveMotionGraphicsFromPlan(opts: {
     }
   }
 
+  // Preset opzionale — il sistema dinamico non ne ha bisogno
   if (!presetIdResolved) {
-    log("auto-mg: nessun preset disponibile, skip");
-    return { savedCount: 0, failedCount: opts.plan.motionGraphics.length, records: [] };
+    log("auto-mg: nessun preset DB, continuo con presetId=null (sistema dinamico)");
   }
 
   log(
