@@ -25,6 +25,10 @@ COPY src ./src
 COPY tsconfig.json ./
 COPY next.config.ts ./
 COPY public ./public
+COPY postcss.config.mjs ./
 
-# Default: webapp (next start). Worker override via RAILWAY_START_COMMAND.
+# Build Next.js (webapp usa next start, worker usa tsx — la build non nuoce)
+RUN npm run build
+
+# Default: webapp (next start). Worker override via startCommand in Railway.
 CMD ["npm", "start"]
