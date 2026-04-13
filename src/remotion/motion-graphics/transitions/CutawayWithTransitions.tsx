@@ -119,7 +119,12 @@ const HardTransitionWrapper: React.FC<{
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const Comp = presentation.component as React.ComponentType<any>;
 
-  const transLen = Math.min(HARD_TRANSITION_FRAMES, Math.floor(totalFrames * 0.2));
+  // Guard: almeno 1 frame per la transizione, e totalFrames deve essere > 2*transLen
+  const transLen = Math.max(1, Math.min(HARD_TRANSITION_FRAMES, Math.floor(totalFrames * 0.2)));
+  // Se il segmento e' troppo corto per avere entry+exit, mostra tutto senza transizione
+  if (totalFrames < transLen * 2 + 1) {
+    return <AbsoluteFill>{children}</AbsoluteFill>;
+  }
 
   // Calcola la fase e il progress
   let presentationProgress: number;

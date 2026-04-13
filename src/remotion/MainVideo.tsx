@@ -153,7 +153,9 @@ export const MainVideo: React.FC<MainVideoProps> = ({
           const startFrame = Math.floor((seg.startMs / 1000) * fps);
           const endFrame = Math.ceil((seg.endMs / 1000) * fps);
           const rawLenFrames = Math.max(1, endFrame - startFrame);
-          const lenFrames = Math.min(rawLenFrames, durationInFrames - startFrame);
+          const lenFrames = Math.max(1, Math.min(rawLenFrames, durationInFrames - startFrame));
+          // Skip segmenti troppo corti per essere visibili (< 3 frame = 0.1s)
+          if (lenFrames < 3 || startFrame >= durationInFrames) return null;
           const cutawayIdx = totalCutawayIndex++;
 
           if (seg.clipKind === "broll") {

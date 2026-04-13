@@ -94,9 +94,11 @@ function exitProgress(frame: number, totalFrames: number): number {
  * con le altre transizioni per dare vita al cutaway.
  */
 function breathScale(frame: number, totalFrames: number): number {
+  if (totalFrames <= 1) return 1.0;
+  const safeTotal = Math.max(2, totalFrames);
   return interpolate(
     frame,
-    [0, totalFrames / 2, totalFrames],
+    [0, safeTotal / 2, safeTotal],
     [1.0, 1.015, 1.0],
     {
       extrapolateLeft: "clamp",
