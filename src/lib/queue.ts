@@ -16,6 +16,9 @@ export const AVATAR_VIDEO_QUEUE = "avatar-video";
 
 export type AvatarVideoJobData = {
   projectId: string;
+  /** Se true, salta HeyGen e ri-renderizza solo con Remotion (step 6-9).
+   *  Richiede che il progetto abbia gia un video HeyGen completato. */
+  retryRender?: boolean;
 };
 
 export const avatarVideoQueue = new Queue<AvatarVideoJobData>(AVATAR_VIDEO_QUEUE, {

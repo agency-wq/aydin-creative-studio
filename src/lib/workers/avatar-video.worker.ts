@@ -71,11 +71,11 @@ async function ensureOutputDir() {
   await fs.mkdir(path.join(REMOTION_PUBLIC_DIR, AVATAR_PUBLIC_SUBDIR), { recursive: true });
 }
 
-type JobData = { projectId: string };
+type JobData = { projectId: string; retryRender?: boolean };
 
 async function processProject(job: Job<JobData>) {
-  const { projectId } = job.data;
-  console.log(`\n[worker] picking up project ${projectId}`);
+  const { projectId, retryRender } = job.data;
+  console.log(`\n[worker] picking up project ${projectId}${retryRender ? " (RETRY RENDER — skip HeyGen)" : ""}`);
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
@@ -100,138 +100,166 @@ async function processProject(job: Job<JobData>) {
   try {
     await ensureOutputDir();
 
-    // ===========================================================
-    // STEP 1 — Audio (solo se voiceProvider == elevenlabs)
-    // ===========================================================
-    let heygenAudioAssetId: string | undefined;
+    // Variabili condivise tra HeyGen-mode e retry-mode
+    let heygenVideoUrl: string;
+    let localMp4Path: string | undefined;
+    let avatarStaticPath: string | undefined;
     let elevenlabsAudioPath: string | undefined;
 
-    if (project.voiceProvider === "elevenlabs") {
-      console.log(`[worker] step 1/4 - generating ElevenLabs audio (voice ${project.voiceId})`);
+    if (retryRender) {
+      // ===================================================================
+      // RETRY RENDER MODE — Salta HeyGen, usa il video gia generato
+      // ===================================================================
+      // Il progetto deve avere gia un finalVideoUrl (raw HeyGen).
+      // Lo ri-scarichiamo in public/ per Remotion e ri-eseguiamo step 6-9.
+      const existingUrl = project.finalVideoUrl;
+      if (!existingUrl || !existingUrl.startsWith("http")) {
+        throw new Error("Retry render: il progetto non ha un video HeyGen valido da ri-renderizzare");
+      }
+      heygenVideoUrl = existingUrl;
+      console.log(`[worker] RETRY MODE: riuso video HeyGen esistente`);
+      await updateRender({ step: "retry_download" });
+
+      // Pulisci i vecchi MG/broll dal DB per evitare duplicati
+      await prisma.motionGraphicsClip.deleteMany({ where: { projectId: project.id } });
+      await prisma.brollClip.deleteMany({ where: { projectId: project.id } });
+      console.log(`[worker]   ✓ vecchi MG/broll eliminati`);
+
+      // Ri-scarica in public/ per Remotion
+      try {
+        const mp4Res = await fetch(heygenVideoUrl);
+        if (mp4Res.ok) {
+          const buf = Buffer.from(await mp4Res.arrayBuffer());
+          localMp4Path = path.join(OUTPUT_DIR, `${project.id}.mp4`);
+          await fs.writeFile(localMp4Path, buf);
+
+          const avatarRelPath = `${AVATAR_PUBLIC_SUBDIR}/${project.id}.mp4`;
+          const avatarAbsPath = path.join(REMOTION_PUBLIC_DIR, avatarRelPath);
+          await fs.writeFile(avatarAbsPath, buf);
+          avatarStaticPath = avatarRelPath;
+
+          console.log(`[worker]   ✓ avatar ri-scaricato (${(buf.length / 1024 / 1024).toFixed(1)} MB)`);
+        }
+      } catch (err) {
+        console.warn(`[worker]   ⚠ download MP4 fallito (continuo con URL remoto): ${(err as Error).message}`);
+      }
+    } else {
+      // ===================================================================
+      // NORMAL MODE — Pipeline completa con HeyGen
+      // ===================================================================
+
+      // STEP 1 — Audio (solo se voiceProvider == elevenlabs)
+      let heygenAudioAssetId: string | undefined;
+
+      if (project.voiceProvider === "elevenlabs") {
+        console.log(`[worker] step 1/4 - generating ElevenLabs audio (voice ${project.voiceId})`);
+        await prisma.project.update({
+          where: { id: project.id },
+          data: { status: "GENERATING_AUDIO" },
+        });
+        await updateRender({ step: "elevenlabs_tts" });
+
+        const voice = await prisma.voice.findUnique({
+          where: { provider_id: { provider: "elevenlabs", id: project.voiceId } },
+        });
+        const recommended =
+          (voice?.recommendedSettings as Record<string, number | boolean> | null) ?? undefined;
+
+        const audioBuf = await textToSpeech({
+          voiceId: project.voiceId,
+          text: project.script,
+          voiceSettings: recommended as
+            | {
+                stability?: number;
+                similarity_boost?: number;
+                style?: number;
+                use_speaker_boost?: boolean;
+              }
+            | undefined,
+        });
+
+        elevenlabsAudioPath = path.join(OUTPUT_DIR, `${project.id}-audio.mp3`);
+        await fs.writeFile(elevenlabsAudioPath, audioBuf);
+        console.log(`[worker]   ✓ audio salvato (${(audioBuf.length / 1024).toFixed(1)} KB)`);
+
+        console.log(`[worker] step 2/4 - upload audio su HeyGen`);
+        await updateRender({ step: "heygen_upload_audio", elevenlabsAudioPath });
+
+        const asset = await uploadAudioAsset(audioBuf, "audio/mpeg");
+        heygenAudioAssetId = asset.id;
+        console.log(`[worker]   ✓ asset HeyGen ${asset.id}`);
+
+        await updateRender({ heygenAudioAssetId });
+      }
+
+      // STEP 3 — HeyGen avatar video
+      const avatar = await prisma.avatar.findUnique({
+        where: { id: project.avatarId },
+        select: { quality: true, supportedEngines: true, name: true },
+      });
+
+      const useAvatarIV = false;
+
+      console.log(
+        `[worker] step 3/4 - generating HeyGen video (avatar ${project.avatarId} "${avatar?.name ?? "?"}", engine=III)`
+      );
       await prisma.project.update({
         where: { id: project.id },
-        data: { status: "GENERATING_AUDIO" },
+        data: { status: "GENERATING_AVATAR" },
       });
-      await updateRender({ step: "elevenlabs_tts" });
+      await updateRender({ step: "heygen_create_video" });
 
-      const voice = await prisma.voice.findUnique({
-        where: { provider_id: { provider: "elevenlabs", id: project.voiceId } },
+      const videoOpts = {
+        avatarId: project.avatarId,
+        title: project.title,
+        resolution: (project.resolution as "720p" | "1080p") ?? "720p",
+        aspectRatio: (project.aspectRatio as "9:16" | "16:9") ?? "9:16",
+        useAvatarIV,
+        ...(heygenAudioAssetId
+          ? { audioAssetId: heygenAudioAssetId }
+          : { script: project.script, voiceId: project.voiceId }),
+      };
+
+      const { video_id } = await createAvatarVideo(videoOpts);
+      console.log(`[worker]   ✓ heygen video_id ${video_id} (engine=III)`);
+      await updateRender({ heygenVideoId: video_id, step: "heygen_polling" });
+
+      // STEP 4 — Polling
+      const finalStatus = await pollVideoUntilDone(video_id, {
+        intervalMs: 8000,
+        maxAttempts: 90,
+        onTick: (s, attempt) => {
+          if (attempt % 3 === 0) {
+            console.log(`[worker]   polling [${attempt}] status=${s.status}`);
+          }
+        },
       });
-      const recommended =
-        (voice?.recommendedSettings as Record<string, number | boolean> | null) ?? undefined;
 
-      const audioBuf = await textToSpeech({
-        voiceId: project.voiceId,
-        text: project.script,
-        voiceSettings: recommended as
-          | {
-              stability?: number;
-              similarity_boost?: number;
-              style?: number;
-              use_speaker_boost?: boolean;
-            }
-          | undefined,
-      });
-
-      elevenlabsAudioPath = path.join(OUTPUT_DIR, `${project.id}-audio.mp3`);
-      await fs.writeFile(elevenlabsAudioPath, audioBuf);
-      console.log(`[worker]   ✓ audio salvato (${(audioBuf.length / 1024).toFixed(1)} KB)`);
-
-      console.log(`[worker] step 2/4 - upload audio su HeyGen`);
-      await updateRender({ step: "heygen_upload_audio", elevenlabsAudioPath });
-
-      const asset = await uploadAudioAsset(audioBuf, "audio/mpeg");
-      heygenAudioAssetId = asset.id;
-      console.log(`[worker]   ✓ asset HeyGen ${asset.id}`);
-
-      await updateRender({ heygenAudioAssetId });
-    }
-
-    // ===========================================================
-    // STEP 3 — HeyGen avatar video
-    // ===========================================================
-    // Avatar IV richiede Premium Credits (separati dai crediti API normali).
-    // L'API quota riporta avatar_iv_free_credit ma il valore è inaffidabile
-    // (può mostrare crediti scaduti/non usabili). Strategia: proviamo IV se
-    // l'avatar lo supporta, e se HeyGen rifiuta ritentiamo subito con III.
-    const avatar = await prisma.avatar.findUnique({
-      where: { id: project.avatarId },
-      select: { quality: true, supportedEngines: true, name: true },
-    });
-
-    // Per ora forziamo sempre Avatar III — il piano corrente non ha
-    // Premium Credits per Avatar IV. Quando si fa upgrade al piano Pro/Scale
-    // API ($99/$330/mese), cambiare questo flag a true.
-    const useAvatarIV = false;
-
-    console.log(
-      `[worker] step 3/4 - generating HeyGen video (avatar ${project.avatarId} "${avatar?.name ?? "?"}", engine=III)`
-    );
-    await prisma.project.update({
-      where: { id: project.id },
-      data: { status: "GENERATING_AVATAR" },
-    });
-    await updateRender({ step: "heygen_create_video" });
-
-    const videoOpts = {
-      avatarId: project.avatarId,
-      title: project.title,
-      resolution: (project.resolution as "720p" | "1080p") ?? "720p",
-      aspectRatio: (project.aspectRatio as "9:16" | "16:9") ?? "9:16",
-      useAvatarIV,
-      ...(heygenAudioAssetId
-        ? { audioAssetId: heygenAudioAssetId }
-        : { script: project.script, voiceId: project.voiceId }),
-    };
-
-    const { video_id } = await createAvatarVideo(videoOpts);
-    console.log(`[worker]   ✓ heygen video_id ${video_id} (engine=III)`);
-    await updateRender({ heygenVideoId: video_id, step: "heygen_polling" });
-
-    // ===========================================================
-    // STEP 4 — Polling
-    // ===========================================================
-    const finalStatus = await pollVideoUntilDone(video_id, {
-      intervalMs: 8000,
-      maxAttempts: 90, // ~12 min max
-      onTick: (s, attempt) => {
-        if (attempt % 3 === 0) {
-          console.log(`[worker]   polling [${attempt}] status=${s.status}`);
-        }
-      },
-    });
-
-    if (!finalStatus.video_url) {
-      throw new Error("HeyGen ha completato ma video_url assente");
-    }
-
-    console.log(`[worker]   ✓ video pronto: ${finalStatus.video_url}`);
-
-    // ===========================================================
-    // STEP 5 — Download MP4 locale + copia in public/ per Remotion
-    // ===========================================================
-    // Remotion NON riesce a scaricare il video HeyGen dal suo proxy
-    // interno (37+ MB, timeout 28s). Soluzione: scarichiamo qui e lo
-    // serviamo come staticFile() dalla cartella public/.
-    let localMp4Path: string | undefined;
-    let avatarStaticPath: string | undefined; // path relativo a public/
-    try {
-      const mp4Res = await fetch(finalStatus.video_url);
-      if (mp4Res.ok) {
-        const buf = Buffer.from(await mp4Res.arrayBuffer());
-        localMp4Path = path.join(OUTPUT_DIR, `${project.id}.mp4`);
-        await fs.writeFile(localMp4Path, buf);
-
-        // Copia in public/generated/avatar/ per Remotion staticFile()
-        const avatarRelPath = `${AVATAR_PUBLIC_SUBDIR}/${project.id}.mp4`;
-        const avatarAbsPath = path.join(REMOTION_PUBLIC_DIR, avatarRelPath);
-        await fs.writeFile(avatarAbsPath, buf);
-        avatarStaticPath = avatarRelPath;
-
-        console.log(`[worker]   ✓ avatar locale ${localMp4Path} (${(buf.length / 1024 / 1024).toFixed(1)} MB) + public/${avatarRelPath}`);
+      if (!finalStatus.video_url) {
+        throw new Error("HeyGen ha completato ma video_url assente");
       }
-    } catch (err) {
-      console.warn(`[worker]   ⚠ download MP4 fallito (continuo): ${(err as Error).message}`);
+
+      heygenVideoUrl = finalStatus.video_url;
+      console.log(`[worker]   ✓ video pronto: ${heygenVideoUrl}`);
+
+      // STEP 5 — Download MP4 locale + copia in public/ per Remotion
+      try {
+        const mp4Res = await fetch(heygenVideoUrl);
+        if (mp4Res.ok) {
+          const buf = Buffer.from(await mp4Res.arrayBuffer());
+          localMp4Path = path.join(OUTPUT_DIR, `${project.id}.mp4`);
+          await fs.writeFile(localMp4Path, buf);
+
+          const avatarRelPath = `${AVATAR_PUBLIC_SUBDIR}/${project.id}.mp4`;
+          const avatarAbsPath = path.join(REMOTION_PUBLIC_DIR, avatarRelPath);
+          await fs.writeFile(avatarAbsPath, buf);
+          avatarStaticPath = avatarRelPath;
+
+          console.log(`[worker]   ✓ avatar locale ${localMp4Path} (${(buf.length / 1024 / 1024).toFixed(1)} MB) + public/${avatarRelPath}`);
+        }
+      } catch (err) {
+        console.warn(`[worker]   ⚠ download MP4 fallito (continuo): ${(err as Error).message}`);
+      }
     }
 
     // ===========================================================
@@ -252,7 +280,7 @@ async function processProject(job: Job<JobData>) {
         // Altrimenti AssemblyAI puo trascrivere direttamente il video URL.
         const audioUrlForAai = elevenlabsAudioPath
           ? undefined // useremo il buffer locale
-          : finalStatus.video_url;
+          : heygenVideoUrl;
 
         const audioBufferForAai = elevenlabsAudioPath
           ? await fs.readFile(elevenlabsAudioPath)
@@ -676,7 +704,7 @@ async function processProject(job: Job<JobData>) {
 
         // Usa il file locale (staticFile) se disponibile — MOLTO più veloce
         // e affidabile del download remoto HeyGen (37+ MB via proxy Remotion).
-        const avatarUrl = avatarStaticPath ?? finalStatus.video_url;
+        const avatarUrl = avatarStaticPath ?? heygenVideoUrl;
         if (avatarStaticPath) {
           console.log(`[worker]   usando avatar locale: staticFile("${avatarStaticPath}")`);
         } else {
@@ -720,7 +748,7 @@ async function processProject(job: Job<JobData>) {
     // (la route streama il file con Range support). Altrimenti fallback al video HeyGen.
     const finalVideoUrl = renderedFinalPath
       ? `/api/projects/${project.id}/final-video`
-      : finalStatus.video_url;
+      : heygenVideoUrl;
 
     if (!renderedFinalPath) {
       console.warn(
@@ -733,7 +761,6 @@ async function processProject(job: Job<JobData>) {
       data: {
         status: "COMPLETED",
         finalVideoUrl,
-        thumbnailUrl: finalStatus.thumbnail_url,
       },
     });
 
