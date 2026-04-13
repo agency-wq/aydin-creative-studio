@@ -1,6 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
+// Nomi tipicamente non-europei da escludere dalla griglia avatar.
+// hasLatinName filtra gia cinesi/arabi/cirillici, ma nomi africani/indiani in
+// alfabeto latino passano — li escludiamo qui per firstName (lowercase).
+const EXCLUDED_FIRST_NAMES = [
+  // Africani
+  "abeni", "abiodun", "adaeze", "adaora", "adebayo", "adekunle", "adewale", "aisha",
+  "akintunde", "amara", "amina", "aminata", "ayodele", "azikiwe", "babajide", "babatunde",
+  "chiamaka", "chidi", "chimamanda", "chinelo", "chinedu", "chinonso", "chioma",
+  "damilola", "emeka", "ezenwa", "fatima", "folake", "funke", "habiba", "ife",
+  "ifeoma", "ikenna", "jabari", "kamau", "kemi", "kofi", "kwame", "kwesi",
+  "latifah", "makena", "mandela", "mufasa", "nneka", "nnamdi", "nzinga",
+  "obinna", "ogechi", "olabisi", "olufemi", "olumide", "oluwaseun", "omotola",
+  "onyeka", "sade", "sanaa", "sekou", "taiwo", "temitope", "thandiwe", "tunde",
+  "uzoma", "yinka", "zainab", "zuri",
+  // Indiani / Sud-asiatici
+  "aarav", "aditya", "ananya", "arjun", "deepak", "devika", "diya", "gaurav",
+  "isha", "kavya", "kiran", "lakshmi", "manish", "meera", "mukesh", "nandini",
+  "neha", "nikhil", "nisha", "pooja", "pradeep", "pranav", "priya", "rahul",
+  "rajesh", "rakesh", "ravi", "rohit", "sachin", "sandeep", "sanjay", "sarita",
+  "shivani", "sneha", "sunil", "suresh", "tanvi", "varun", "vidya", "vikram", "vivek",
+  // Arabi / Medio Oriente
+  "abdel", "abdullah", "ahmed", "ali", "amira", "farid", "fatimah", "hamid",
+  "hassan", "hussein", "ibrahim", "ismail", "jamal", "karim", "khalid", "layla",
+  "mahmoud", "mariam", "mohammad", "mostafa", "nadia", "nasser", "omar", "rashid",
+  "reem", "saad", "salim", "samira", "tariq", "yasmin", "youssef", "zahra",
+];
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
 
@@ -27,6 +54,12 @@ export async function GET(req: NextRequest) {
   if (!showAll) {
     where.hasLatinName = true;
     where.hasPreview = true;
+    // Escludi avatar con nomi tipicamente non-europei (africani, indiani, arabi, ecc.)
+    // hasLatinName esclude gia cinesi/cirillici/arabi, ma nomi africani in alfabeto latino
+    // passano il filtro. Usiamo un NOT contains su firstName per i piu comuni.
+    where.NOT = [
+      { firstName: { in: EXCLUDED_FIRST_NAMES } },
+    ];
   }
 
   if (qualityParam === "premium" || qualityParam === "standard" || qualityParam === "legacy") {

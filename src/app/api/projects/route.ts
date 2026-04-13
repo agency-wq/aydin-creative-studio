@@ -17,30 +17,16 @@ const CreateProjectSchema = z.object({
   aspectRatio: z.enum(["9:16", "16:9"]).default("9:16"),
 });
 
-// Pesca la voce HeyGen migliore in base al gender dell'avatar.
+// Pesca la voce HeyGen per l'avatar.
 // Strategia:
-//  1. Se l'avatar ha un default_voice_id E quella voce e italiana → usa quella
-//  2. Altrimenti pesca la prima voce HeyGen italiana del gender corretto
-//  3. Fallback: prima voce HeyGen italiana qualsiasi
-async function pickHeyGenVoiceForAvatar(
+//  1. Se l'avatar ha un default_voice_id → usa quello direttamente (HeyGen lo gestisce)
+//  2. Fallback: null (il worker userà la voce ElevenLabs come TTS esterno)
+function pickHeyGenVoiceForAvatar(
   avatar: { defaultVoiceId: string | null; gender: string }
-): Promise<string | null> {
-  if (avatar.defaultVoiceId) {
-    const def = await prisma.voice.findUnique({
-      where: { provider_id: { provider: "heygen", id: avatar.defaultVoiceId } },
-    });
-    if (def && def.language === "it") return def.id;
-  }
-
-  const matchGender = await prisma.voice.findFirst({
-    where: { provider: "heygen", language: "it", gender: avatar.gender, enabled: true },
-  });
-  if (matchGender) return matchGender.id;
-
-  const any = await prisma.voice.findFirst({
-    where: { provider: "heygen", language: "it", enabled: true },
-  });
-  return any?.id ?? null;
+): string | null {
+  // HeyGen assegna già una voce di default a ogni avatar — la usiamo direttamente
+  // senza bisogno di un record nella tabella Voice
+  return avatar.defaultVoiceId ?? null;
 }
 
 export async function POST(req: NextRequest) {
@@ -68,7 +54,7 @@ export async function POST(req: NextRequest) {
   if (parsed.data.voiceProvider === "heygen") {
     // Per HeyGen pesca AUTOMATICAMENTE la voce migliore (anche se l'utente l'ha specificata)
     // Cosi l'utente non deve mai scegliere una voce HeyGen.
-    resolvedVoiceId = await pickHeyGenVoiceForAvatar(avatar);
+    resolvedVoiceId = pickHeyGenVoiceForAvatar(avatar);
     if (!resolvedVoiceId) {
       return NextResponse.json(
         { message: "Nessuna voce HeyGen italiana disponibile" },
