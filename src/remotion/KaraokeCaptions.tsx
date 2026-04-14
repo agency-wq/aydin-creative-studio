@@ -1,10 +1,10 @@
 // Karaoke-style captions: mostra ~5-7 parole alla volta, evidenziando
-// la parola attualmente parlata in giallo. Spring scale-in sulla parola attiva.
+// la parola attualmente parlata in giallo. Pulito, stabile, leggibile.
 
-import { AbsoluteFill, useCurrentFrame, useVideoConfig, spring } from "remotion";
+import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 import type { RemotionWord } from "./types";
 
-const WORDS_PER_GROUP = 5; // quante parole mostrare per chunk
+const WORDS_PER_GROUP = 6;
 
 type Group = {
   start: number; // ms
@@ -34,20 +34,31 @@ export const KaraokeCaptions: React.FC<{ words: RemotionWord[] }> = ({ words }) 
   if (!words || words.length === 0) return null;
 
   const groups = buildGroups(words);
-  // Trova il gruppo attivo (il primo che contiene nowMs, o l'ultimo se siamo dopo)
+
+  // Trova il gruppo attivo — con 200ms di margine per evitare flash vuoti tra gruppi
   const activeGroup =
-    groups.find((g) => nowMs >= g.start && nowMs <= g.end) ??
-    [...groups].reverse().find((g) => nowMs >= g.start) ??
+    groups.find((g) => nowMs >= g.start && nowMs <= g.end + 200) ??
+    [...groups].reverse().find((g) => nowMs >= g.start && nowMs <= g.end + 500) ??
     null;
 
   if (!activeGroup) return null;
+
+  // Fade in/out del container per transizioni morbide
+  const groupDurationMs = activeGroup.end - activeGroup.start;
+  const fadeMs = Math.min(150, groupDurationMs * 0.15);
+  const containerOpacity = interpolate(
+    nowMs,
+    [activeGroup.start, activeGroup.start + fadeMs, activeGroup.end - fadeMs, activeGroup.end + 150],
+    [0, 1, 1, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
 
   return (
     <AbsoluteFill
       style={{
         justifyContent: "flex-end",
         alignItems: "center",
-        paddingBottom: 220,
+        paddingBottom: 240,
         pointerEvents: "none",
       }}
     >
@@ -56,32 +67,18 @@ export const KaraokeCaptions: React.FC<{ words: RemotionWord[] }> = ({ words }) 
           display: "flex",
           flexWrap: "wrap",
           justifyContent: "center",
-          gap: "12px 18px",
-          maxWidth: "85%",
-          padding: "20px 28px",
-          background: "rgba(0,0,0,0.55)",
-          backdropFilter: "blur(8px)",
-          borderRadius: 24,
+          gap: "8px 14px",
+          maxWidth: "88%",
+          padding: "16px 24px",
+          background: "rgba(0,0,0,0.6)",
+          backdropFilter: "blur(12px)",
+          borderRadius: 16,
+          opacity: containerOpacity,
         }}
       >
         {activeGroup.words.map((w, i) => {
           const isActive = nowMs >= w.start && nowMs <= w.end;
           const isPast = nowMs > w.end;
-
-          // Spring scale solo quando entra
-          const enterFrame = Math.floor((w.start / 1000) * fps);
-          const sinceEnter = frame - enterFrame;
-          const scale = isActive
-            ? 1 +
-              0.18 *
-                spring({
-                  frame: Math.max(0, sinceEnter),
-                  fps,
-                  config: { damping: 12, stiffness: 200, mass: 0.6 },
-                  from: 0,
-                  to: 1,
-                })
-            : 1;
 
           return (
             <span
@@ -89,16 +86,19 @@ export const KaraokeCaptions: React.FC<{ words: RemotionWord[] }> = ({ words }) 
               style={{
                 display: "inline-block",
                 fontFamily: "Inter, system-ui, -apple-system, Helvetica, Arial, sans-serif",
-                fontSize: 78,
-                fontWeight: 900,
-                lineHeight: 1,
-                letterSpacing: -1,
-                color: isActive ? "#FFD400" : isPast ? "#FFFFFF" : "rgba(255,255,255,0.55)",
+                fontSize: 64,
+                fontWeight: 800,
+                lineHeight: 1.15,
+                letterSpacing: -0.5,
+                color: isActive ? "#FFD400" : isPast ? "#FFFFFF" : "rgba(255,255,255,0.5)",
                 textShadow: isActive
-                  ? "0 6px 18px rgba(0,0,0,0.6), 0 0 24px rgba(255,212,0,0.4)"
-                  : "0 4px 14px rgba(0,0,0,0.55)",
-                transform: `scale(${scale})`,
+                  ? "0 2px 12px rgba(255,212,0,0.5)"
+                  : "0 2px 8px rgba(0,0,0,0.4)",
+                transform: isActive ? "scale(1.08)" : "scale(1)",
                 transformOrigin: "center bottom",
+                transition: "color 0.1s, transform 0.1s, text-shadow 0.1s",
+                paintOrder: "stroke fill",
+                WebkitTextStroke: "1.5px rgba(0,0,0,0.3)",
               }}
             >
               {w.word}

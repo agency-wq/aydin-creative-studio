@@ -82,16 +82,21 @@ export async function fetchBrollFromPlan(opts: {
         }
 
         // Ordine preferenze:
-        //   1. Video con contesto europeo nello slug URL (italian, european, caucasian, office, city)
-        //   2. Video senza indizi di etnia non-europea (neutri)
-        //   3. Per durata desc (clip piu lunghe = piu margine di trim)
-        const EUROPEAN_TERMS = ["european", "italian", "caucasian", "europe", "italy", "spain", "france", "germany", "london", "paris", "rome", "milan"];
+        //   1. Video SENZA persone (no man/woman/person/people/doctor/talking nel slug)
+        //   2. Per durata desc (clip piu lunghe = piu margine di trim)
+        const PEOPLE_TERMS = [
+          "man", "woman", "men", "women", "person", "people", "guy", "girl",
+          "boy", "lady", "doctor", "patient", "talking", "speaking", "smiling",
+          "laughing", "portrait", "face", "selfie", "couple", "family", "child",
+          "baby", "kid", "teenager", "elderly", "senior", "worker", "employee",
+          "businessman", "businesswoman",
+        ];
         candidates.sort((a, b) => {
-          const aUrl = `${a.v.url} ${a.file!.link}`.toLowerCase();
-          const bUrl = `${b.v.url} ${b.file!.link}`.toLowerCase();
-          const aEu = EUROPEAN_TERMS.some((t) => aUrl.includes(t)) ? 0 : 1;
-          const bEu = EUROPEAN_TERMS.some((t) => bUrl.includes(t)) ? 0 : 1;
-          if (aEu !== bEu) return aEu - bEu; // europei prima
+          const aSlug = `${a.v.url}`.toLowerCase();
+          const bSlug = `${b.v.url}`.toLowerCase();
+          const aHasPeople = PEOPLE_TERMS.some((t) => aSlug.includes(t)) ? 1 : 0;
+          const bHasPeople = PEOPLE_TERMS.some((t) => bSlug.includes(t)) ? 1 : 0;
+          if (aHasPeople !== bHasPeople) return aHasPeople - bHasPeople; // senza persone prima
           return b.v.duration - a.v.duration; // poi per durata
         });
         const chosen = candidates[0];
