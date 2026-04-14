@@ -736,8 +736,10 @@ async function processProject(job: Job<JobData>) {
         renderedFinalPath = outPath;
         console.log(`[worker]   ✓ Remotion render salvato: ${outPath}`);
       } catch (err) {
-        console.error(`[worker]   ❌ Remotion render FALLITO:`);
-        console.error(err);
+        const e = err as Error & { frame?: number; reason?: string };
+        console.error(`[worker]   ❌ Remotion render FALLITO al frame ${e.frame ?? "?"}: ${e.message ?? String(err)}`);
+        if (e.reason) console.error(`[worker]   reason: ${e.reason}`);
+        if (e.stack) console.error(`[worker]   stack: ${e.stack.split('\n').slice(0, 5).join('\n')}`);
       }
     }
 

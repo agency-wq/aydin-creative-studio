@@ -116,10 +116,15 @@ export async function renderMainVideo(opts: {
     inputProps: opts.inputProps,
     imageFormat: "jpeg",
     jpegQuality: 90,
-    concurrency: null, // auto = CPU cores
+    // Concurrency limitata su Railway per ridurre pressione memoria.
+    concurrency: 2,
     audioCodec: "aac",
-    // Timeout alto: backup nel caso la sync fallisca e si usi URL remoto
     timeoutInMilliseconds: 120_000,
+    chromiumOptions: {
+      // Flags per stabilita' su server con poca RAM
+      gl: "angle",
+      disableWebSecurity: true,
+    },
     onProgress: ({ progress, renderedFrames, encodedFrames }) =>
       opts.onProgress?.({ progress, renderedFrames, encodedFrames }),
   });
