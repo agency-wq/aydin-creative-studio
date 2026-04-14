@@ -746,11 +746,26 @@ async function processProject(job: Job<JobData>) {
     // ===========================================================
     // Persist final state
     // ===========================================================
-    // Se Remotion ha renderizzato, esponiamo via /api/projects/[id]/final-video
-    // (la route streama il file con Range support). Altrimenti fallback al video HeyGen.
-    const finalVideoUrl = renderedFinalPath
-      ? `/api/projects/${project.id}/final-video`
-      : heygenVideoUrl;
+    // Il video renderizzato è sul filesystem del worker. Lo serviamo dal
+    // mini HTTP server del worker (startFileServer). L'URL viene costruito
+    // usando il dominio pubblico del worker (RAILWAY_PUBLIC_DOMAIN) oppure
+    // il RAILWAY_SERVICE_WEBAPP_URL come fallback.
+    let finalVideoUrl: string;
+    if (renderedFinalPath) {
+      const workerDomain = process.env.RAILWAY_PUBLIC_DOMAIN
+        ?? process.env.WORKER_PUBLIC_URL
+        ?? null;
+      const filename = path.basename(renderedFinalPath);
+      if (workerDomain) {
+        const proto = workerDomain.includes("://") ? "" : "https://";
+        finalVideoUrl = `${proto}${workerDomain}/output/${filename}`;
+      } else {
+        // Fallback: proxy via webapp API route (funziona solo se filesystem condiviso)
+        finalVideoUrl = `/api/projects/${project.id}/final-video`;
+      }
+    } else {
+      finalVideoUrl = heygenVideoUrl;
+    }
 
     if (!renderedFinalPath) {
       console.warn(
@@ -794,10 +809,73 @@ async function processProject(job: Job<JobData>) {
   }
 }
 
+// ===========================================================
+// Mini HTTP server per servire i video renderizzati.
+// Worker e webapp sono container separati su Railway, quindi
+// i file in OUTPUT_DIR non sono accessibili dalla webapp.
+// Questo server espone /output/<filename>.mp4 con Range support.
+// ===========================================================
+import http from "node:http";
+
+function startFileServer() {
+  const PORT = parseInt(process.env.PORT ?? "3001", 10);
+  const server = http.createServer(async (req, res) => {
+    // Health check
+    if (req.url === "/health") {
+      res.writeHead(200).end("ok");
+      return;
+    }
+    // Serve solo file da OUTPUT_DIR
+    if (!req.url?.startsWith("/output/") || !req.url.endsWith(".mp4")) {
+      res.writeHead(404).end("not found");
+      return;
+    }
+    const filename = path.basename(req.url);
+    const filePath = path.join(OUTPUT_DIR, filename);
+
+    try {
+      const stat = await fs.stat(filePath);
+      const total = stat.size;
+      const range = req.headers.range;
+
+      if (range) {
+        const [startStr, endStr] = range.replace(/bytes=/, "").split("-");
+        const start = parseInt(startStr, 10);
+        const end = endStr ? parseInt(endStr, 10) : total - 1;
+        res.writeHead(206, {
+          "Content-Range": `bytes ${start}-${end}/${total}`,
+          "Accept-Ranges": "bytes",
+          "Content-Length": end - start + 1,
+          "Content-Type": "video/mp4",
+        });
+        const { createReadStream } = await import("node:fs");
+        createReadStream(filePath, { start, end }).pipe(res);
+      } else {
+        res.writeHead(200, {
+          "Content-Length": total,
+          "Content-Type": "video/mp4",
+          "Accept-Ranges": "bytes",
+        });
+        const { createReadStream } = await import("node:fs");
+        createReadStream(filePath).pipe(res);
+      }
+    } catch {
+      res.writeHead(404).end("file not found");
+    }
+  });
+
+  server.listen(PORT, () => {
+    console.log(`[worker] file server listening on port ${PORT}`);
+  });
+}
+
 async function main() {
   console.log(`[worker] starting BullMQ worker for queue "${AVATAR_VIDEO_QUEUE}"`);
   console.log(`[worker] redis: ${redisUrl}`);
   console.log(`[worker] output dir: ${OUTPUT_DIR}`);
+
+  // Avvia il file server per servire i video renderizzati
+  startFileServer();
 
   const worker = new Worker<JobData>(AVATAR_VIDEO_QUEUE, processProject, {
     connection,
