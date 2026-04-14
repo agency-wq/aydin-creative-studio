@@ -22,7 +22,8 @@
 //   - Strategia overall
 
 import Anthropic from "@anthropic-ai/sdk";
-import { applyEthnicityConstraint } from "./ethnicity-filter";
+// Il filtro etnico per b-roll avviene post-ricerca nel auto-broll.ts
+// via isPexelsVideoExcluded(), non piu come constraint nelle query.
 
 // =============================================================================
 // Public types
@@ -192,9 +193,9 @@ function buildSystemPrompt(): string {
     "",
     "## REGOLE B-ROLL",
     "",
-    "6) B-roll persone: query DEVE SEMPRE includere 'caucasian' o 'european' come PRIMA parola. MAI solo 'man' o 'woman'. MAI 'african', 'asian', 'indian', 'arab', 'black'.",
-    "7) Query Pexels: INGLESE, specifiche, 4-7 parole.",
-    "8) Fallback: 2-3 query più generiche per ogni b-roll.",
+    "6) B-roll CON persone: la query DEVE includere 'italian' come keyword. Esempio: 'italian woman morning routine bathroom', 'italian man cooking kitchen'. MAI usare 'african', 'asian', 'indian', 'arab', 'black', 'chinese'. Se possibile EVITA b-roll con persone e preferisci oggetti, paesaggi, ambienti, close-up mani/dettagli.",
+    "7) Query Pexels: INGLESE, specifiche, 4-7 parole. NESSUN tag extra, solo le keyword di ricerca.",
+    "8) Fallback: 2-3 query più generiche. Se la prima include persone e le fallback possono essere senza persone, preferisci fallback senza persone.",
     "",
     "## MUSICA",
     "",
@@ -271,7 +272,7 @@ function buildUserPrompt(input: DirectorInput, target: number): string {
     `- gap minimo tra cutaway: ${MIN_GAP_MS} ms`,
     `- nessun cutaway nei primi ${INTRO_GUARD_MS} ms / ultimi ${OUTRO_GUARD_MS} ms`,
     "- timestamp allineato ai confini di parola",
-    "- per b-roll persone: query DEVE contenere 'caucasian' o 'european'",
+    "- per b-roll persone: query DEVE contenere 'italian'. Meglio evitare persone se possibile.",
     "- music.prompt OBBLIGATORIO, INGLESE, 4-8 parole, strumentale",
     "- music.duckingVolume [0.10, 0.30], music.fullVolume [0.40, 0.80]",
     "- OGNI description MG deve essere DETTAGLIATA (almeno 30 parole): layout, colori, effetti, animazioni, tipografia",
@@ -372,8 +373,8 @@ async function planWithClaude(input: DirectorInput): Promise<VideoPlan> {
           : [];
         return [{
           startMs, endMs,
-          query: applyEthnicityConstraint(query),
-          fallbackQueries: fallbacks.map(applyEthnicityConstraint),
+          query,
+          fallbackQueries: fallbacks,
           reason: String(m.reason ?? "").slice(0, 200),
         }];
       })
@@ -578,10 +579,10 @@ function staticFallback(input: DirectorInput): VideoPlan {
     } else {
       broll.push({
         startMs, endMs,
-        query: applyEthnicityConstraint("modern european business workspace"),
+        query: "modern european business workspace",
         fallbackQueries: [
-          applyEthnicityConstraint("italian city street daily life"),
-          applyEthnicityConstraint("aerial drone landscape europe"),
+          "italian city street daily life",
+          "aerial drone landscape europe",
         ],
         reason: "fallback statico",
       });

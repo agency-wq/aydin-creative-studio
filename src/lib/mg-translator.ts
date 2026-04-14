@@ -143,11 +143,11 @@ export async function translateToRenderSpec(opts: {
 
   const descShort = opts.description.slice(0, 60);
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await client.messages.create({
         model: "claude-sonnet-4-5",
-        max_tokens: 3000,
+        max_tokens: 4096,
         system: buildTranslatorSystemPrompt(),
         messages: [
           {
@@ -168,16 +168,31 @@ export async function translateToRenderSpec(opts: {
         .map((b) => b.text)
         .join("\n");
 
-      // Estrai JSON
-      const match = text.match(/\{[\s\S]*\}/);
-      if (!match) {
+      // Estrai JSON — prova prima il blocco ```json, poi il greedy match
+      let jsonStr: string | null = null;
+      const codeBlock = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+      if (codeBlock) {
+        jsonStr = codeBlock[1];
+      } else {
+        // Greedy match — trova l'oggetto JSON più esterno
+        const match = text.match(/\{[\s\S]*\}/);
+        if (match) jsonStr = match[0];
+      }
+
+      if (!jsonStr) {
         log(`mg-translator: nessun JSON nell'output per "${descShort}..." (tentativo ${attempt + 1})`);
         continue;
       }
 
+      // Pulizia JSON: rimuovi trailing comma prima di } o ]
+      jsonStr = jsonStr
+        .replace(/,\s*([}\]])/g, "$1")
+        // Rimuovi commenti // inline
+        .replace(/\/\/[^\n"]*$/gm, "");
+
       let raw: unknown;
       try {
-        raw = JSON.parse(match[0]);
+        raw = JSON.parse(jsonStr);
       } catch (e) {
         log(`mg-translator: JSON parse fallito per "${descShort}...": ${(e as Error).message} (tentativo ${attempt + 1})`);
         continue;
@@ -196,8 +211,8 @@ export async function translateToRenderSpec(opts: {
     }
   }
 
-  // Fallback dopo 2 tentativi
-  log(`mg-translator: FALLBACK per "${descShort}..." dopo 2 tentativi`);
+  // Fallback dopo 3 tentativi
+  log(`mg-translator: FALLBACK per "${descShort}..." dopo 3 tentativi`);
   return fallbackRenderSpec(opts.description, opts.theme);
 }
 
